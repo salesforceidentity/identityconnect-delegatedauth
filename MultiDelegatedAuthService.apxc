@@ -1,0 +1,54 @@
+@RestResource(urlMapping='/multidelegatedauth/*')
+global with sharing class MultiDelegatedAuthService {
+    
+    static final Blob AUTH_TRUE = Blob.valueOf('<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><AuthenticateResponse xmlns="urn:authentication.soap.sforce.com"><Authenticated>true</Authenticated></AuthenticateResponse></soapenv:Body></soapenv:Envelope>');
+    static final Blob AUTH_FALSE = Blob.valueOf('<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><AuthenticateResponse xmlns="urn:authentication.soap.sforce.com"><Authenticated>false</Authenticated></AuthenticateResponse></soapenv:Body></soapenv:Envelope>');
+    
+    static final String IDENTITY_CONNECT_A = 'https://YOUR_HOST_AND_PORT_FOR_SERVER_A/openidm/info/login';
+    static final String IDENTITY_CONNECT_B = 'https://YOUR_HOST_AND_PORT_FOR_SERVER_B/openidm/info/login';
+    
+    @HttpPost
+    global static void doPost() {
+    
+        Blob responseBody = AUTH_FALSE;
+        
+        RestRequest req = RestContext.request;
+        Dom.Document doc = new Dom.Document();
+        doc.load(req.requestBody.toString());
+        Dom.XMLNode authRequest = doc.getRootElement();
+        
+        Dom.XMLNode body = authRequest.getChildElement('Body', 'http://schemas.xmlsoap.org/soap/envelope/');
+        Dom.XMLNode authenticate = body.getChildElement('Authenticate', 'urn:authentication.soap.sforce.com');
+        String username = authenticate.getChildElement('username', 'urn:authentication.soap.sforce.com').getText();
+        String password = authenticate.getChildElement('password', 'urn:authentication.soap.sforce.com').getText();
+        String sourceIp = authenticate.getChildElement('sourceIp', 'urn:authentication.soap.sforce.com').getText();
+        
+    	List<User> users = [SELECT Id, FederationIdentifier, DelegatedAuthService__c FROM User WHERE username = :username limit 1];
+        if (users.size() == 0 ) {
+            isError = true;
+        } else {
+            User u = users.get(0);
+            String delAuthService = IDENTITY_CONNECT_A;
+            if ( (u.DelegatedAuthService__c != null ) && ( u.DelegatedAuthService__c == 'IDENTITY CONNECT B' ) ) delAuthService = IDENTITY_CONNECT_B;
+                        
+            Http h = new Http();
+            HttpRequest hr = new HttpRequest();
+            hr.setEndpoint(delAuthService);
+            hr.setHeader('X-OpenIDM-Username',u.FederationIdentifier);
+            hr.setHeader('X-OpenIDM-Password',password);
+            hr.setMethod('GET');
+            HttpResponse hrs = h.send(hr);
+            if (hrs.getStatusCode() == 200)  {
+                responseBody = AUTH_TRUE;
+            } 
+        }
+            
+        RestResponse res = RestContext.response;
+        res.addHeader('Content-Type', 'application/soap+xml');
+        res.statusCode = 200;
+        res.responseBody = responseBody;
+            
+    }
+  
+  
+}
